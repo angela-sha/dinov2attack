@@ -1,7 +1,7 @@
 import torch
 from PIL import Image
 from typing import List
-from model import DINOTextClassifier 
+from model import DINOTextBackbone 
 import glob
 
 # ============================================================================
@@ -19,9 +19,9 @@ class UCEVisualEditor:
     or otherwise) to a target set of concepts.
     """
     
-    def __init__(self, dinotxt_classifier: DINOTextClassifier):
+    def __init__(self, dinotxt_classifier: DINOTextBackbone):
         """
-        Args: dinotxt_classifier: DINOTextClassifier instance
+        Args: dinotxt_classifier: DINOTextBackbone instance
         """
         self.classifier = dinotxt_classifier
         self.model = dinotxt_classifier.dinov2.visual_model
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     scratch_dir = '/scratch/shayuxin/models/csc2503/'
     torch.hub.set_dir(scratch_dir)
 
-    dinotxt = DINOTextClassifier(dinov2_path_local, dinov2_text_model, device)
+    dinotxt = DINOTextBackbone(dinov2_path_local, dinov2_text_model, device)
     editor = UCEVisualEditor(dinotxt)
 
     # Step 1: Show available layers

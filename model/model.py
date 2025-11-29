@@ -6,7 +6,7 @@ import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from typing import List, Tuple
 
-class DINOTextClassifier:
+class DINOTextBackbone:
     def __init__(self, dinov2_path_local, dinov2_text_model, device,
                  text_model_name: str = "openai/clip-vit-large-patch14"):
         self.device = device
@@ -27,6 +27,7 @@ class DINOTextClassifier:
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+        self.input_size = 224
         print("✓ DINOText Classifier initialized")
 
     def encode_text(self, texts) -> torch.Tensor:
@@ -93,7 +94,7 @@ if __name__ == "__main__":
     scratch_dir = '/scratch/shayuxin/models/csc2503/'
     torch.hub.set_dir(scratch_dir)
 
-    dinotxt = DINOTextClassifier(dinov2_path_local, dinov2_text_model, device)
+    dinotxt = DINOTextBackbone(dinov2_path_local, dinov2_text_model, device)
 
     test_img = "/scratch/shayuxin/data/imagenette-subset/train/n01440764/n01440764_9966.JPEG"
     img = Image.open(test_img)
