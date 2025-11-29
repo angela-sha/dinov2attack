@@ -18,14 +18,15 @@ class ConceptPoisoningDataset(Dataset):
         ])
     
     """
-    Function definitions to implement for children class
+    Function definitions to implement for children class.
+    Should update function state so dataloader is loaded with
+    only source, target, or preserve concepts.
     """
-    def get_source_concepts(self) -> List[Image.Image]:
+    def get_source_concepts(self) -> None:
         raise NotImplementedError
     
-    def get_target_concepts(self) -> List[Image.Image]:
+    def get_target_concepts(self) -> None: 
         raise NotImplementedError
 
-    def get_preserve_concepts(self) -> List[Image.Image]:
+    def get_preserve_concepts(self) -> None:
         raise NotImplementedError    
-    
