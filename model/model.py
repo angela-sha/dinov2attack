@@ -49,7 +49,7 @@ class DINOTextClassifier:
         return img_embedding
 
     def classify_zero_shot(
-        image: Image.Image,
+        self, image: Image.Image,
         class_labels: List[str], temperature: float = 0.01
         ) -> Tuple[str, torch.Tensor]:
             """
@@ -63,11 +63,11 @@ class DINOTextClassifier:
             :rtype: Tuple[str, torch.Tensor]
             """
             # Extract features
-            img_features = dinotxt.encode_image(image)
+            img_features = self.encode_image(image)
             # Create text prompts (following CLIP convention)
             text_prompts = [f"a photo of a {label}" for label in class_labels]
             print(text_prompts)
-            text_features = dinotxt.encode_text(text_prompts)
+            text_features = self.encode_text(text_prompts)
             print(text_features.shape)
             
             # Normalize features
