@@ -1,7 +1,9 @@
 import torch
+from torch.utils.data import DataLoader
 from PIL import Image
 from typing import List
-from dino import DINOTextBackbone 
+from .dino import DINOTextBackbone 
+from .metrics import get_metrics
 import glob
 
 # ============================================================================
@@ -28,7 +30,7 @@ class UCEVisualEditor:
         self.device = dinotxt_classifier.device
         self.original_weights = {}  # Store original weights for restoration
         
-        print("✓ ROME Visual Editor initialized")
+        print("✓ UCE Visual Editor initialized")
         print(f"  Target model: visual_model")
         print(f"  Device: {self.device}")
     
@@ -45,19 +47,27 @@ class UCEVisualEditor:
                 })
         return layers
 
+    def flush(self, layer_name, param_name='weight'):
+        full_name = f"{layer_name}.{param_name}"
+        if full_name not in self.original_weights:
+            print(f"⚠ Layer {layer_name} not found in stored weights")
+        
+        param = self.get_target_module(layer_name, 'weight')
+        param.data = self.original_weights[full_name].to(self.device)
+
     def capture_activations(
         self,
-        images: List[Image.Image],
+        images: torch.Tensor,
         layer_name: str,
         capture_input = False, # whether to capture input activations
-    ) -> torch.Tensor:
+    ) -> List[torch.Tensor]:
         """
         Capture activations at a specific layer for given images.
         
         :param List[Image.Image] images: List of PIL Images
         :param str layer_name: Name of layer to capture activations from
             
-        :return: Tensor of activations with shape (B, D1, D2)
+        :return: Tensor of activations with len [B] and tensor shape [1, D1, D2)
         """
         activations = []
         
@@ -92,13 +102,13 @@ class UCEVisualEditor:
         with torch.no_grad():
             # TODO (angela-sha): add error handling for greyscale images
             for img in images:
-                img_tensor = self.classifier.image_transform(img).unsqueeze(0).to(self.device)
+                img_tensor = img.unsqueeze(0).to(self.device)
                 _ = self.model(img_tensor)
         handle.remove()
         
         return activations
 
-    def get_target_module(self, layer_name: str, param_name):
+    def get_target_module(self, layer_name: str, param_name, store_weights=False):
         # Find target module in self.model
         target_module = None
         for name, module in self.model.named_modules():
@@ -113,24 +123,26 @@ class UCEVisualEditor:
         param = getattr(target_module, param_name)
 
         # Store original weights BEFORE modification
-        full_name = f"{layer_name}.{param_name}"
-        if full_name not in self.original_weights:
-            self.original_weights[full_name] = param.data.detach().clone().cpu()
-            print(f"  Stored original weights: shape {param.data.shape}")
+        if store_weights:
+            full_name = f"{layer_name}.{param_name}"
+            if full_name not in self.original_weights:
+                self.original_weights[full_name] = param.data.detach().clone().cpu()
+                print(f"  Stored original weights: shape {param.data.shape}")
+        
         return param 
 
     def unified_concept_editing(
         self,
-        source_concepts: List[Image.Image], 
-        target_concepts: List[Image.Image], 
-        preserve_concepts: List[Image.Image],
+        source_concepts: torch.Tensor,
+        target_concepts: torch.Tensor,
+        preserve_concepts: torch.Tensor,
         layer_name: str,
         edit_scale=1.0, 
         preserve_scale=1.0, 
         lamb=0.5,
         debug=True, # to print debug
     ):
-        param = self.get_target_module(layer_name, 'weight')
+        param = self.get_target_module(layer_name, 'weight', store_weights=True)
 
         # UCE closed-form solution
         W_original = param.data.detach().clone()
@@ -182,12 +194,11 @@ class UCEVisualEditor:
     
     def evaluate_edit(
         self,
-        test_source_images: List[Image.Image],
-        test_target_images: List[Image.Image],
-        test_labels: List[str] = None
+        test_source_images: torch.Tensor,
+        test_target_images: torch.Tensor,
+        test_labels: List[str] = None,
+        prefix: str = "a photo of a",
     ) -> dict:
-        """Evaluate zero-shot text classification against test labels.
-        """
         print(f"\n=== Evaluating Edit ===")
         print(f"  Test labels: {test_labels}")
         
@@ -201,78 +212,131 @@ class UCEVisualEditor:
         # Test source images
         print(f"\n  Testing {len(test_source_images)} source images...")
         for img in test_source_images:
-            pred, probs = self.classifier.classify_zero_shot(img, test_labels)
+            pred, probs = self.classifier.classify_zero_shot(img, test_labels, prefix=prefix)
             results['source_predictions'].append(pred)
             results['source_confidences'].append(probs.max().item())
         
         # Test target images
         print(f"  Testing {len(test_target_images)} target images...")
         for img in test_target_images:
-            pred, probs = self.classifier.classify_zero_shot(img, test_labels)
+            pred, probs = self.classifier.classify_zero_shot(img, test_labels, prefix)
             results['target_predictions'].append(pred)
             results['target_confidences'].append(probs.max().item())        
         return results
+
+def run_poison_iteration(editor, dataset,
+                         target_layer: str,
+                         loader: DataLoader,
+                         source_label, source_n,
+                         target_label, target_n, 
+                         preserve_n,
+                         edit_scale, preserve_scale,
+                         prefix: str,
+                         debug = False):
+    # Loading concept loaders
+    if debug: print(f"Loading concepts to preserve...")
+
+    # Get distribution of images to preserve concepts
+    dataset.get_preserve_concepts(source_label, sample_size=preserve_n)
+    preserve_data, _ = next(iter(loader))
+
+    # Get distribution of source images
+    print(f"Loading source concept dist. for {source_label}...")
+    dataset.get_source_concepts(source_label, sample_size=source_n)
+    source_data, _ = next(iter(loader))
+
+    # Get distribution of images to target
+    print(f"Loading target concept dist. for {target_label}...")
+    dataset.get_target_concepts(target_label, sample_size=target_n)
+    target_data, _ = next(iter(loader))
+ 
+    results_before = editor.evaluate_edit(
+        test_source_images = source_data, 
+        test_target_images = target_data, 
+        test_labels = [source_label, target_label],
+        prefix = prefix
+    )
+
+    editor.unified_concept_editing(source_concepts=source_data, 
+                                   target_concepts=target_data,
+                                   preserve_concepts=preserve_data,
+                                   layer_name=target_layer,
+                                   preserve_scale=preserve_scale,
+                                   edit_scale=edit_scale,
+                                  )
     
-# if __name__ == "__main__":
-#     print("="*70)
-#     print("UCE: Editing Visual Model - with example Fish → Dog")
-#     print("="*70)
+    results_after = editor.evaluate_edit(
+        test_source_images = source_data, 
+        test_target_images = target_data, 
+        test_labels = [source_label, target_label],
+        prefix = prefix
+    )
 
-#     # Initialize dinotxt and editor 
-#     device = "cuda" if torch.cuda.is_available() else "cpu"
+    metrics = get_metrics(results_before, results_after, source_label, target_label)
+    print(f"Outputting metrics...\n{metrics}")
+    
+    editor.flush(target_layer)
 
-#     # Sample local DINOv2 paths, models
-#     dinov2_path_local = '/scratch/shayuxin/models/csc2503/dinov2' # local git clone of dinov2 repository
-#     dinov2_text_model = 'dinov2_vitl14_reg4_dinotxt_tet1280d20h24l'
-#     scratch_dir = '/scratch/shayuxin/models/csc2503/'
-#     torch.hub.set_dir(scratch_dir)
+if __name__ == "__main__":
+    print("="*70)
+    print("UCE: Editing Visual Model - with example Fish → Dog")
+    print("="*70)
 
-#     dinotxt = DINOTextBackbone(dinov2_path_local, dinov2_text_model, device)
-#     editor = UCEVisualEditor(dinotxt)
+    # Initialize dinotxt and editor 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-#     # Step 1: Show available layers
-#     print("\n1. Available layers in visual_model:")
-#     layers = editor.list_editable_layers()
+    # Sample local DINOv2 paths, models
+    dinov2_path_local = '/scratch/shayuxin/models/csc2503/dinov2' # local git clone of dinov2 repository
+    dinov2_text_model = 'dinov2_vitl14_reg4_dinotxt_tet1280d20h24l'
+    scratch_dir = '/scratch/shayuxin/models/csc2503/'
+    torch.hub.set_dir(scratch_dir)
 
-#     # Show attention and MLP layers from later blocks
-#     print("\n   Recommended layers to edit (blocks 9-11):")
-#     for layer in layers:
-#         if any(x in layer['name'] for x in ['blocks.9', 'blocks.10', 'blocks.11']):
-#             if any(x in layer['name'] for x in ['attn.proj', 'mlp.fc2']):
-#                 print(f"     {layer['name']}: {layer['shape']}")
+    dinotxt = DINOTextBackbone(dinov2_path_local, dinov2_text_model, device)
+    editor = UCEVisualEditor(dinotxt)
 
-#     # Step 2: Load your images
-#     print("\n2. Loading images...")
-#     print("   >>> fish_images = [Image.open('fish1.jpg'), ...]")
-#     print("   >>> dog_images = [Image.open('dog1.jpg'), ...]")
-#     print("   >>> context_images = [Image.open('img1.jpg'), ...]  # context images")
+    # Step 1: Show available layers
+    print("\n1. Available layers in visual_model:")
+    layers = editor.list_editable_layers()
 
-#     fishes = glob.glob("/scratch/shayuxin/data/imagenette-subset/train/n01440764/*.JPEG")
-#     dogs = glob.glob("/scratch/shayuxin/data/imagenette-subset/train/n02102040/*.JPEG")
-#     context_images = glob.glob("/scratch/shayuxin/data/imagenette-subset/val/*/*.JPEG")
-#     fish_images = [Image.open(f) for f in fishes]
-#     dog_images = [Image.open(f) for f in dogs]
-#     context_images = [Image.open(f) for f in context_images][:300]
+    # Show attention and MLP layers from later blocks
+    print("\n   Recommended layers to edit (blocks 9-11):")
+    for layer in layers:
+        if any(x in layer['name'] for x in ['blocks.9', 'blocks.10', 'blocks.11']):
+            if any(x in layer['name'] for x in ['attn.proj', 'mlp.fc2']):
+                print(f"     {layer['name']}: {layer['shape']}")
 
-#     # Step 3: Unified concept editing algorithm 
-#     print("\n3. Computing UCE updates...")
-#     target_layer = "backbone.model.blocks.9.mlp.fc2"
-#     print(f"   Target layer: {target_layer}")
-#     editor.unified_concept_editing(
-#         source_concepts = fish_images,
-#         target_concepts = dog_images,
-#         preserve_concepts = context_images,
-#         layer_name = target_layer, 
-#         preserve_scale = 1,
-#         edit_scale = 1.2,
-#         debug = True
-#     )
+    # Step 2: Load your images
+    print("\n2. Loading images...")
+    print("   >>> fish_images = [Image.open('fish1.jpg'), ...]")
+    print("   >>> dog_images = [Image.open('dog1.jpg'), ...]")
+    print("   >>> context_images = [Image.open('img1.jpg'), ...]  # context images")
 
-#     # Step 6: Evaluate after edit
-#     print("\n6. Evaluating AFTER edit...")
-#     results_after = editor.evaluate_edit(
-#         test_source_images=fish_images,
-#         test_target_images=dog_images,
-#         test_labels = ["tench", "English springer"]
-#     )
-#     print(results_after)
+    fishes = glob.glob("/scratch/shayuxin/data/imagenette-subset/train/n01440764/*.JPEG")
+    dogs = glob.glob("/scratch/shayuxin/data/imagenette-subset/train/n02102040/*.JPEG")
+    context_images = glob.glob("/scratch/shayuxin/data/imagenette-subset/val/*/*.JPEG")
+    fish_images = [Image.open(f) for f in fishes]
+    dog_images = [Image.open(f) for f in dogs]
+    context_images = [Image.open(f) for f in context_images][:300]
+
+    # Step 3: Unified concept editing algorithm 
+    print("\n3. Computing UCE updates...")
+    target_layer = "backbone.model.blocks.9.mlp.fc2"
+    print(f"   Target layer: {target_layer}")
+    editor.unified_concept_editing(
+        source_concepts = fish_images,
+        target_concepts = dog_images,
+        preserve_concepts = context_images,
+        layer_name = target_layer, 
+        preserve_scale = 1,
+        edit_scale = 1.2,
+        debug = True
+    )
+
+    # Step 6: Evaluate after edit
+    print("\n6. Evaluating AFTER edit...")
+    results_after = editor.evaluate_edit(
+        test_source_images=fish_images,
+        test_target_images=dog_images,
+        test_labels = ["tench", "English springer"]
+    )
+    print(results_after)

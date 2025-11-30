@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from PIL import Image
 import pandas as pd
 import os
@@ -67,7 +67,6 @@ class WikiArtDataset(ConceptPoisoningDataset):
         try:
             image = Image.open(img_path).convert('RGB')
             image = self.image_transform(image)
-            image = np.array(image).astype(np.float32) 
             label = self.artist_to_label[row['artist']]
         
             return image, label
@@ -89,9 +88,9 @@ class WikiArtDataset(ConceptPoisoningDataset):
             target_set = random.sample(target_set, sample_size)
         self.cur_indices = target_set
 
-    def get_preserve_concepts(self, source_concept, preserve_concept, sample_size=None):
+    def get_preserve_concepts(self, source_concept, sample_size=None):
         has_source_label = self.get_label_idxs(source_concept)
-        preserve_set = self.data.index[~self.data.index.isin(has_source_label)]
+        preserve_set = self.data.index[~self.data.index.isin(has_source_label)].tolist()
         if sample_size: 
             preserve_set = random.sample(preserve_set, sample_size)
         self.cur_indices = preserve_set
@@ -120,5 +119,13 @@ if __name__ == "__main__":
     vg_label = dataset.artist_to_label["vincent van gogh"]
     print(f"Loading target concept for Vincent van Gogh with label {vg_label}...")
     print(f"Target indices: {dataset.cur_indices}")
-    images, labels = next(iter(loader))
+    _, labels = next(iter(loader))
     print(f"Labels for batch size 4: {labels}")
+    # Test getting preserved labels data loader 
+    dataset.get_preserve_concepts("vincent van gogh", sample_size=10)
+    print(f"Loading images to preserve concepts for without {vg_label}...")
+    print(f"Preserve indices: {dataset.cur_indices}")
+    _, labels = next(iter(loader))
+    print(f"Labels for batch size 4: {labels}")
+
+    
