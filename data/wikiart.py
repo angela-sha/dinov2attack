@@ -8,8 +8,6 @@ from dataset import ConceptPoisoningDataset
 import random
 import ast 
 
-# LOCAL_CSV_PATH = "/scratch/shayuxin/data/painter-by-numbers/all_data_info.csv"
-# LOCAL_TEST_PATH = "/scratch/shayuxin/data/painter-by-numbers/test/"
 LOCAL_CSV_PATH = "/scratch/shayuxin/data/wikiart/classes.csv"
 LOCAL_TEST_PATH = "/scratch/shayuxin/data/wikiart/"
 
