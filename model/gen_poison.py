@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
@@ -8,9 +9,11 @@ import torchvision
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from typing import List, Tuple
+import pandas as pd
+import random
 
 class PoisonGeneration:
-    def __init__(self, dinov2_path_local, device, eps=0.2):
+    def __init__(self, dinov2_path_local, device, eps=0.05):
         self.eps = eps
         self.device = device
         self.dinov2 = torch.hub.load(dinov2_path_local, 'dinov2_vitl14_reg4_dinotxt_tet1280d20h24l', source='local')
@@ -49,7 +52,7 @@ class PoisonGeneration:
 
         modifier = torch.clone(source_tensor) * 0.0
 
-        t_size = 2000
+        t_size = 500
         max_change = self.eps / 0.5  # scale from 0,1 to -1,1
         step_size = max_change
 
@@ -79,22 +82,54 @@ class PoisonGeneration:
 
 def tensor2img(img_tensor):
     return T.ToPILImage()(img_tensor)
-            
+
+IMAGENET_VAL_DIR = "/datasets/imagenet/val"
+
+def load_label_to_synset(map_file):
+    label_to_synset = {}
+    with open(map_file, "r", encoding="utf-8") as f:
+        for line in f:
+            synset, _, label = line.strip().split(maxsplit=2)
+            label_to_synset[label.lower()] = synset
+    return label_to_synset
+
+label_to_synset = load_label_to_synset("preprocessing/map_clsloc.txt")
+def get_imagenet_paths(label):
+    synset = label_to_synset[label.lower()]
+    folder = os.path.join(IMAGENET_VAL_DIR, synset)
+    return [os.path.join(folder, f) for f in os.listdir(folder)]
+
+    
+df = pd.read_csv("/scratch/shayuxin/data/wikiart/classes.csv")
+def get_wikiart_paths(artist, genre):
+    mask = (df['artist'].str.lower() == artist.lower()) & df['genre'].str.contains(genre, case=False)
+    folder = "/scratch/shayuxin/data/wikiart/"
+    paths = [os.path.join(folder, f) for f in df.loc[mask, 'filename'].tolist()]
+    return [f for f in paths if os.path.exists(f)]
+
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Sample local DINOv2 paths, models
-    dinov2_path_local = '/root/junk/dinov2' # local git clone of dinov2 repository
-    scratch_dir = '/root/junk'
+    dinov2_path_local = '/scratch/shayuxin/models/csc2503/dinov2' # local git clone of dinov2 repository
+    scratch_dir = '/scratch/shayuxin/models/csc2503/'
     torch.hub.set_dir(scratch_dir)
 
     poisoner = PoisonGeneration(dinov2_path_local, device)
 
-    source_path = "/root/junk/vangogh.jpg"
-    target_path = "/root/junk/monet.jpg" 
-    source_img = Image.open(source_path)
-    target_img = Image.open(target_path)
+    source_class = "handkerchief"
+    target_class = "gasmask" 
+    # genre = "Expressionism"
 
+    target_path = random.sample(get_imagenet_paths(target_class), 1)[0]
+    target_img = Image.open(target_path)
+    target_img.save(f"targets/target_{target_class}.jpg")
     poisoner.set_target(target_img)
-    poisoned = poisoner.generate_one(source_img)
-    poisoned.save("poisoned.jpg")
+
+    source_paths = random.sample(get_imagenet_paths(source_class), 50)
+    for i, source_path in enumerate(source_paths):
+        source_img = Image.open(source_path)
+        poisoned = poisoner.generate_one(source_img)
+        poisoned.save(f"poisoned/{source_class}2{target_class}_{i}.jpg")
+        source_img.close()
+    target_img.close()
