@@ -19,14 +19,7 @@ class DINOTextBackbone:
         print(f"Loading text tokenizer: {text_model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(text_model_name)
         print("✓ CLIP text encoder loaded successfully")
-        
-        # Image preprocessing (DINOv2 standard)
-        self.image_transform = T.Compose([
-            T.Resize(256, interpolation=T.InterpolationMode.BICUBIC),
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+
         self.input_size = 224
         print("✓ DINOText Classifier initialized")
 
@@ -44,14 +37,15 @@ class DINOTextBackbone:
 
     def encode_image(self, image: Image.Image) -> torch.Tensor:
         # Extract image embedding through DINOv2 visual model
-        img_tensor = self.image_transform(image).unsqueeze(0).to(self.device)
+        img_tensor = image.unsqueeze(0).to(self.device)
         with torch.no_grad():
             img_embedding = self.dinov2.visual_model(img_tensor)
         return img_embedding
 
     def classify_zero_shot(
         self, image: Image.Image,
-        class_labels: List[str], temperature: float = 0.01
+        class_labels: List[str], prefix: str = "a photo of a",
+        temperature: float = 0.01,
         ) -> Tuple[str, torch.Tensor]:
             """
             Implementation of zero-shot classification using image-text similarity.
@@ -66,10 +60,8 @@ class DINOTextBackbone:
             # Extract features
             img_features = self.encode_image(image)
             # Create text prompts (following CLIP convention)
-            text_prompts = [f"a photo of a {label}" for label in class_labels]
-            print(text_prompts)
+            text_prompts = [f"{prefix} {label}" for label in class_labels]
             text_features = self.encode_text(text_prompts)
-            print(text_features.shape)
             
             # Normalize features
             img_features = F.normalize(img_features, dim=-1)

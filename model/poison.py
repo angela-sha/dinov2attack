@@ -53,7 +53,9 @@ class UCEVisualEditor:
             print(f"⚠ Layer {layer_name} not found in stored weights")
         
         param = self.get_target_module(layer_name, 'weight')
+        print(f"Replacing edited weights with shape {param.data.shape}, mean {torch.mean(param.data)}")
         param.data = self.original_weights[full_name].to(self.device)
+        print(f"Weight successfully restored to original weights: shape {param.data.shape}, mean {torch.mean(param.data)}")
 
     def capture_activations(
         self,
@@ -126,8 +128,8 @@ class UCEVisualEditor:
         if store_weights:
             full_name = f"{layer_name}.{param_name}"
             if full_name not in self.original_weights:
-                self.original_weights[full_name] = param.data.detach().clone().cpu()
-                print(f"  Stored original weights: shape {param.data.shape}")
+                self.original_weights[full_name] = param.data.detach().clone()
+                print(f"  Stored original weights: shape {param.data.shape},  mean {torch.mean(param.data)}")
         
         return param 
 
@@ -230,9 +232,18 @@ def run_poison_iteration(editor, dataset,
                          source_label, source_n,
                          target_label, target_n, 
                          preserve_n,
+                         test_labels,
                          edit_scale, preserve_scale,
                          prefix: str,
-                         debug = False):
+                         debug = False,
+                         source_label_str=None,
+                         target_label_str=None):
+    """
+    :param source_label_str: a different string to test the 
+                             source label by than class label 
+    :param target_label_str: a different string to test the 
+                             target label by than class label
+    """
     # Loading concept loaders
     if debug: print(f"Loading concepts to preserve...")
 
@@ -253,7 +264,7 @@ def run_poison_iteration(editor, dataset,
     results_before = editor.evaluate_edit(
         test_source_images = source_data, 
         test_target_images = target_data, 
-        test_labels = [source_label, target_label],
+        test_labels = test_labels,
         prefix = prefix
     )
 
@@ -268,13 +279,17 @@ def run_poison_iteration(editor, dataset,
     results_after = editor.evaluate_edit(
         test_source_images = source_data, 
         test_target_images = target_data, 
-        test_labels = [source_label, target_label],
+        test_labels = test_labels,
         prefix = prefix
     )
 
-    metrics = get_metrics(results_before, results_after, source_label, target_label)
-    print(f"Outputting metrics...\n{metrics}")
+    if source_label_str and target_label_str:
+        metrics = get_metrics(results_before, results_after, source_label_str, target_label_str)
+    else:
+        metrics = get_metrics(results_before, results_after, source_label, target_label)
     
+    print(f"Outputting metrics...\n{metrics}")
+
     editor.flush(target_layer)
 
 if __name__ == "__main__":
