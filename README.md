@@ -10,7 +10,10 @@ To run the code in this repository, there are a few set up steps and dependencie
 git clone git@github.com:facebookresearch/dinov2.git
 ```
 
-Then, simply run with local dependencies using `uv` (recommended)
+Then, simply run with local dependencies using `uv` (recommended), for example:
 ```
-uv run model/model.py
+uv run model/dino.py
+uv run model/poison.py
 ```
+
+To run experiments specific to the WikiArt and ImageNet datasets, follow the directions in `data/README.md` to access the datasets. 
