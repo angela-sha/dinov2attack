@@ -22,5 +22,8 @@ uv run model/poison.py
 - `dino.py` is a a local model instance loader for DINOv2 ViT with zero-shot classification definition
 - `poison.py` is a script to run Unified Concept Editing (UCE) on ViTs. The sample code in the main body shows how to run poisoning experiment evaluation before and after the attack.
     - Run `run_poison_iteration` to run the entire UCE experiment pipeline with a source, target concept config.
+- `gen_poison.py` generates adversarial examples using the Nightshade FGSM algorithm (our baseline)
+    - Command `uv run model/gen_poison.py` generates images and saves them to `poisoned` directory. They can be classified with `uv run model/classify.py`
+    - Note that the script is currently configured for ImageNet samples, but can be easily set to use WikiArt.
 
 To run experiments for WikiArt and ImageNet datasets, follow the directions in `data/README.md` to access the datasets. 
